@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LangChain RAG 文档问答助手</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #181b24; --panel2: #1f2430; --border: #2a3140;
+    --text: #e6e9ef; --muted: #9aa4b2; --accent: #4f8cff; --accent2: #36d399;
+    --warn: #fbbd23; --danger: #f87272; --code: #0b0e14;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 14px; }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--panel);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .grow { flex: 1; }
+  .pill { padding: 3px 10px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border); }
+  .pill.ok { color: var(--accent2); border-color: var(--accent2); }
+  .pill.no { color: var(--warn); border-color: var(--warn); }
+  .pill.muted { color: var(--muted); }
+  label { color: var(--muted); font-size: 12px; }
+  select, input[type=text], input[type=password], input[type=number], textarea {
+    background: var(--code); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 9px; font-size: 13px; outline: none; width: 100%; }
+  select:focus, input:focus, textarea:focus { border-color: var(--accent); }
+  button { background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    padding: 8px 14px; font-size: 13px; cursor: pointer; }
+  button:hover { filter: brightness(1.1); }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .config-bar { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .radios { display: flex; gap: 8px; }
+  .radios label { display: flex; align-items: center; gap: 4px; color: var(--text);
+    background: var(--code); border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+  nav { display: flex; gap: 4px; padding: 0 20px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  nav button { background: transparent; color: var(--muted); border: none; padding: 12px 14px; position: relative; border-radius: 0; }
+  nav button.active { color: var(--text); }
+  nav button.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--accent); }
+  main { padding: 20px; max-width: 980px; margin: 0 auto; }
+  .tab { display: none; }
+  .tab.active { display: block; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .msg { border-radius: 10px; padding: 12px 14px; margin: 10px 0; white-space: pre-wrap; line-height: 1.6; }
+  .msg.q { background: var(--panel2); border: 1px solid var(--border); }
+  .msg.a { background: #11202e; border: 1px solid #1d3a52; }
+  .src { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; }
+  .src summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+  .src .item { background: var(--code); border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin-top: 8px; }
+  .sim { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--accent2); color: var(--accent2); margin-right: 6px; }
+  .files li { padding: 6px 0; border-bottom: 1px solid var(--border); list-style: none; }
+  ul.files { padding: 0; margin: 0; }
+  .hint { color: var(--muted); font-size: 12px; margin: 6px 0; }
+  .err { color: var(--danger); }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #fff; border-top-color: transparent;
+    border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .stat { display: flex; gap: 18px; flex-wrap: wrap; color: var(--muted); font-size: 12px; }
+  .stat b { color: var(--text); }
+</style>
+</head>
+<body>
+<header>
+  <h1>📚 LangChain RAG 文档问答助手</h1>
+  <div class="grow"></div>
+  <span id="statusPill" class="pill muted">状态：加载中…</span>
+  <button id="initBtn">初始化 / 重建索引</button>
+</header>
+
+<div class="config-bar" style="padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--border)">
+  <div class="field">
+    <label>模型提供商</label>
+    <div class="radios" id="provRadios">
+      <label><input type="radio" name="provider" value="deepseek" checked> DeepSeek</label>
+      <label><input type="radio" name="provider" value="mimo"> MiMo</label>
+      <label><input type="radio" name="provider" value="openai"> OpenAI</label>
+    </div>
+  </div>
+  <div class="field" style="min-width:280px">
+    <label>API Key（留空则用 .env / 环境变量）</label>
+    <input type="password" id="apiKey" placeholder="粘贴对应模型的 API Key">
+  </div>
+  <div class="field">
+    <label>&nbsp;</label>
+    <button class="ghost" id="saveCfg">保存配置</button>
+  </div>
+</div>
+
+<nav>
+  <button data-tab="qa" class="active">💬 问答</button>
+  <button data-tab="search">🔍 检索</button>
+  <button data-tab="docs">📄 文档</button>
+  <button data-tab="history">🕘 历史</button>
+  <button data-tab="settings">⚙️ 设置</button>
+</nav>
+
+<main>
+  <!-- 问答 -->
+  <section class="tab active" id="tab-qa">
+    <div class="card">
+      <div class="stat" id="qaStat"></div>
+    </div>
+    <div class="card">
+      <div id="chat"></div>
+      <textarea id="question" rows="3" placeholder="输入问题，回车发送（Shift+Enter 换行）"></textarea>
+      <div class="row" style="margin-top:10px;justify-content:flex-end">
+        <button id="askBtn">发送</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 检索 -->
+  <section class="tab" id="tab-search">
+    <div class="card">
+      <div class="row">
+        <div class="field" style="flex:1;min-width:240px">
+          <label>查询内容</label>
+          <input type="text" id="searchQuery" placeholder="例如：什么是机器学习？">
+        </div>
+        <div class="field" style="width:120px">
+          <label>返回条数 k</label>
+          <input type="number" id="searchK" value="3" min="1" max="20">
+        </div>
+        <div class="field"><label>&nbsp;</label><button id="searchBtn">检索</button></div>
+      </div>
+      <p class="hint">返回按相似度（cosine，越大越相关）排序的文档片段。</p>
+      <div id="searchResults"></div>
+    </div>
+  </section>
+
+  <!-- 文档 -->
+  <section class="tab" id="tab-docs">
+    <div class="card">
+      <p class="hint">程序启动时自动加载 <code>docs/</code> 下的所有 .txt。上传新文档后，请点右上角「初始化 / 重建索引」使其生效。</p>
+      <ul class="files" id="docList"></ul>
+      <hr style="border-color:var(--border)">
+      <div class="row">
+        <div class="field" style="flex:1;min-width:240px">
+          <label>上传 .txt 文档到 docs/</label>
+          <input type="file" id="uploadFile" accept=".txt">
+        </div>
+        <div class="field"><label>&nbsp;</label><button id="uploadBtn">上传</button></div>
+      </div>
+      <p id="uploadMsg" class="hint"></p>
+    </div>
+  </section>
+
+  <!-- 历史 -->
+  <section class="tab" id="tab-history">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <p class="hint" style="margin:0">本会话内的问答记录（刷新页面或重启服务会清空）。</p>
+        <button class="ghost" id="clearHist">清空历史</button>
+      </div>
+      <div id="historyList"></div>
+    </div>
+  </section>
+
+  <!-- 设置 -->
+  <section class="tab" id="tab-settings">
+    <div class="card">
+      <div class="row">
+        <div class="field" style="width:160px">
+          <label>文本块大小 chunk_size</label>
+          <input type="number" id="setChunkSize" value="500" min="50" max="4000" step="50">
+        </div>
+        <div class="field" style="width:160px">
+          <label>重叠字符 chunk_overlap</label>
+          <input type="number" id="setOverlap" value="50" min="0" max="1000" step="10">
+        </div>
+        <div class="field" style="width:140px">
+          <label>检索条数 search_k</label>
+          <input type="number" id="setK" value="3" min="1" max="20">
+        </div>
+        <div class="field"><label>&nbsp;</label><button id="saveSettings">保存设置</button></div>
+      </div>
+      <p class="hint">修改参数后需重新「初始化 / 重建索引」才能生效。</p>
+      <p id="setMsg" class="hint"></p>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+async function api(path, method = "GET", body = null) {
+  const opt = { method, headers: {} };
+  if (body !== null) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  let data = {};
+  try { data = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+  return data;
+}
+
+function setStatus(s) {
+  const p = $("#statusPill");
+  if (s.initialized) {
+    p.className = "pill ok";
+    p.textContent = `✓ 已建索引 · ${s.doc_count} 文档 / ${s.chunk_count} 块 · ${s.model_provider}`;
+  } else {
+    p.className = "pill no";
+    p.textContent = `⚠ 未初始化 · 模型 ${s.model_provider}`;
+  }
+}
+
+async function refreshStatus() {
+  try {
+    const s = await api("/api/status");
+    setStatus(s);
+    $("#qaStat").innerHTML =
+      `<span>模型：<b>${s.model_provider}</b></span>` +
+      `<span>API Key：<b>${s.has_key ? "已配置" : "未配置"}</b></span>` +
+      `<span>索引：<b>${s.initialized ? "已建立" : "未建立"}</b></span>` +
+      `<span>文档数：<b>${s.doc_count}</b></span>` +
+      `<span>文本块：<b>${s.chunk_count}</b></span>`;
+    // 同步设置表单
+    $("#setChunkSize").value = s.chunk_size;
+    $("#setOverlap").value = s.chunk_overlap;
+    $("#setK").value = s.search_k;
+  } catch (e) { console.error(e); }
+}
+
+async function refreshDocs() {
+  try {
+    const d = await api("/api/docs");
+    const ul = $("#docList");
+    ul.innerHTML = "";
+    if (!d.files.length) ul.innerHTML = '<li class="hint">docs/ 下暂无 .txt 文件</li>';
+    d.files.forEach(f => { const li = document.createElement("li"); li.textContent = "📄 " + f; ul.appendChild(li); });
+  } catch (e) { $("#docList").innerHTML = '<li class="err">' + e.message + "</li>"; }
+}
+
+// 标签切换
+document.querySelectorAll("nav button").forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll("nav button").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+    b.classList.add("active");
+    $("#tab-" + b.dataset.tab).classList.add("active");
+    if (b.dataset.tab === "history") refreshHistory();
+    if (b.dataset.tab === "docs") refreshDocs();
+  };
+});
+
+// 保存配置
+$("#saveCfg").onclick = async () => {
+  const provider = document.querySelector('input[name=provider]:checked').value;
+  const apiKey = $("#apiKey").value.trim();
+  try {
+    await api("/api/config", "POST", { model_provider: provider, api_key: apiKey });
+    await refreshStatus();
+    alert("配置已保存。如更换了模型或修改了参数，请点「初始化 / 重建索引」。");
+  } catch (e) { alert("保存失败：" + e.message); }
+};
+
+// 初始化 / 重建索引
+$("#initBtn").onclick = async () => {
+  const btn = $("#initBtn");
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 初始化中…';
+  try {
+    const r = await api("/api/init", "POST");
+    if (r.ok) { alert(`索引建立完成：${r.doc_count} 文档 / ${r.chunk_count} 文本块`); }
+    else alert("初始化失败：" + r.error);
+  } catch (e) { alert("初始化失败：" + e.message); }
+  btn.disabled = false; btn.textContent = "初始化 / 重建索引";
+  await refreshStatus();
+};
+
+// 问答
+async function ask() {
+  const q = $("#question").value.trim();
+  if (!q) return;
+  const chat = $("#chat");
+  chat.insertAdjacentHTML("beforeend", `<div class="msg q">🧑 ${escapeHtml(q)}</div>`);
+  const waitId = "w" + Date.now();
+  chat.insertAdjacentHTML("beforeend", `<div class="msg a" id="${waitId}">🤔 思考中…</div>`);
+  $("#question").value = "";
+  try {
+    const r = await api("/api/ask", "POST", { question: q });
+    let html = `🤖 ${escapeHtml(r.answer)}`;
+    if (r.sources && r.sources.length) {
+      html += `<details class="src"><summary>参考来源（${r.sources.length} 条）</summary>`;
+      r.sources.forEach((s, i) => {
+        html += `<div class="item"><span class="sim">相似度 ${s[1].toFixed(3)}</span>${escapeHtml(s[0])}</div>`;
+      });
+      html += `</details>`;
+    }
+    $("#" + waitId).innerHTML = html;
+  } catch (e) {
+    $("#" + waitId).innerHTML = `<span class="err">❌ ${escapeHtml(e.message)}</span>`;
+  }
+  chat.scrollTop = chat.scrollHeight;
+}
+$("#askBtn").onclick = ask;
+$("#question").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); }
+});
+
+// 检索
+$("#searchBtn").onclick = async () => {
+  const query = $("#searchQuery").value.trim();
+  const k = parseInt($("#searchK").value || "3", 10);
+  const box = $("#searchResults");
+  if (!query) return;
+  box.innerHTML = '<p class="hint"><span class="spinner"></span> 检索中…</p>';
+  try {
+    const r = await api("/api/search", "POST", { query, k });
+    box.innerHTML = "";
+    if (!r.results.length) box.innerHTML = '<p class="hint">没有找到相关片段。</p>';
+    r.results.forEach((s, i) => {
+      box.insertAdjacentHTML("beforeend",
+        `<div class="item" style="margin-top:8px"><span class="sim">#${i+1} 相似度 ${s.similarity.toFixed(3)}</span>` +
+        `<div style="margin-top:6px;white-space:pre-wrap">${escapeHtml(s.content)}</div></div>`);
+    });
+  } catch (e) { box.innerHTML = `<p class="err">❌ ${escapeHtml(e.message)}</p>`; }
+};
+
+// 上传文档
+$("#uploadBtn").onclick = async () => {
+  const f = $("#uploadFile").files[0];
+  if (!f) { $("#uploadMsg").textContent = "请先选择 .txt 文件"; return; }
+  const fd = new FormData(); fd.append("file", f);
+  $("#uploadMsg").textContent = "上传中…";
+  try {
+    const r = await fetch("/api/upload", { method: "POST", body: fd });
+    const d = await r.json();
+    if (d.ok) { $("#uploadMsg").textContent = `✓ 已上传 ${d.filename}，请点右上角「初始化 / 重建索引」。`; await refreshDocs(); }
+    else $("#uploadMsg").textContent = "✗ " + (d.error || "上传失败");
+  } catch (e) { $("#uploadMsg").textContent = "✗ " + e.message; }
+};
+
+// 历史
+async function refreshHistory() {
+  const box = $("#historyList");
+  try {
+    const r = await api("/api/history");
+    box.innerHTML = "";
+    if (!r.history.length) { box.innerHTML = '<p class="hint">暂无历史记录。</p>'; return; }
+    r.history.forEach((h, i) => {
+      box.insertAdjacentHTML("beforeend",
+        `<div class="msg q">🧑 ${escapeHtml(h.question)}</div>` +
+        `<div class="msg a">🤖 ${escapeHtml(h.answer)}</div>`);
+    });
+  } catch (e) { box.innerHTML = `<p class="err">${escapeHtml(e.message)}</p>`; }
+}
+$("#clearHist").onclick = () => { if (confirm("确定清空本会话历史？")) { state_history_clear(); } };
+async function state_history_clear() {
+  try { await api("/api/history/clear", "POST"); } catch (e) { alert("清空失败：" + e.message); }
+  refreshHistory();
+}
+
+// 设置
+$("#saveSettings").onclick = async () => {
+  const provider = document.querySelector('input[name=provider]:checked').value;
+  const body = {
+    model_provider: provider,
+    chunk_size: parseInt($("#setChunkSize").value, 10),
+    chunk_overlap: parseInt($("#setOverlap").value, 10),
+    search_k: parseInt($("#setK").value, 10),
+  };
+  if ($("#apiKey").value.trim()) body.api_key = $("#apiKey").value.trim();
+  try {
+    await api("/api/config", "POST", body);
+    $("#setMsg").textContent = "✓ 设置已保存，请重新「初始化 / 重建索引」生效。";
+    await refreshStatus();
+  } catch (e) { $("#setMsg").textContent = "✗ " + e.message; }
+};
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// 初始化页面
+refreshStatus();
+refreshDocs();
+</script>
+</body>
+</html>

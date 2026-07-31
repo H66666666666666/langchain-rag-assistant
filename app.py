@@ -68,6 +68,10 @@ class RAGAssistant:
         self.vectorstore = None
         self.chain = None
 
+        # 统计信息（供 Web 界面展示）
+        self.doc_count = 0
+        self.chunk_count = 0
+
         # 设置
         self.chunk_size = 500
         self.chunk_overlap = 50
@@ -114,10 +118,12 @@ class RAGAssistant:
         # 2. 加载文档
         print("   加载文档...")
         documents = self._load_documents()
+        self.doc_count = len(documents)
 
         # 3. 分割文本
         print("   分割文本...")
         chunks = self._split_documents(documents)
+        self.chunk_count = len(chunks)
 
         # 4. 创建向量库
         print("   创建向量库...")
@@ -232,6 +238,27 @@ class RAGAssistant:
         answer = self.chain.invoke(question)
 
         return answer
+
+    def ask_with_sources(self, question: str, k: int = None) -> tuple:
+        """
+        提问并返回答案 + 检索到的来源片段（带相似度）
+
+        Args:
+            question: 问题
+            k: 检索来源数量（默认用 self.search_k）
+
+        Returns:
+            (answer, sources) 元组；sources 为 [(文本, 相似度), ...]
+        """
+        if not self.chain:
+            raise RuntimeError("请先调用 initialize() 初始化")
+
+        answer = self.chain.invoke(question)
+        k = k or self.search_k
+        results = self.vectorstore.similarity_search_with_score(question, k=k)
+        # Chroma 返回距离，转换为相似度（向量库使用 cosine 距离）
+        sources = [(doc.page_content, 1 - score) for doc, score in results]
+        return answer, sources
 
     def search(self, query: str, k: int = 3) -> list:
         """
