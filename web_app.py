@@ -20,6 +20,7 @@ from flask import Flask, request, jsonify, render_template
 from app import RAGAssistant, BASE_DIR
 
 app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 限制上传文件大小 10MB
 
 _PROVIDERS = ("deepseek", "mimo", "openai")
 _KEY_ENV = {
@@ -31,7 +32,7 @@ _KEY_ENV = {
 # ---- 全局状态（单进程内存态，重启即清空历史）----
 _state = {
     "model_provider": "deepseek",
-    "api_key": None,
+    "keys": {},  # 各模型 provider 独立保存 API Key，避免切换模型时串用
     "chunk_size": 500,
     "chunk_overlap": 50,
     "search_k": 3,
@@ -48,7 +49,7 @@ def _build_assistant():
     a = RAGAssistant(
         docs_dir="./docs",
         model_provider=_state["model_provider"],
-        api_key=_state["api_key"],
+        api_key=_state["keys"].get(_state["model_provider"]),
     )
     a.chunk_size = _state["chunk_size"]
     a.chunk_overlap = _state["chunk_overlap"]
@@ -75,7 +76,7 @@ def index():
 @app.route("/api/status")
 def api_status():
     provider = _state["model_provider"]
-    has_key = bool(_state["api_key"] or os.getenv(_KEY_ENV[provider]))
+    has_key = bool(_state["keys"].get(provider) or os.getenv(_KEY_ENV[provider]))
     return jsonify({
         "model_provider": provider,
         "initialized": _state["initialized"],
@@ -97,9 +98,10 @@ def api_config():
 
     _state["model_provider"] = provider
     if data.get("api_key"):
-        # 写入环境变量，使 RAGAssistant 的回退逻辑也能取到
+        # 写入环境变量，使 RAGAssistant 的回退逻辑也能取到；
+        # 同时按 provider 单独保存，避免切换模型时把 A 的 key 误传给 B
         os.environ[_KEY_ENV[provider]] = data["api_key"]
-        _state["api_key"] = data["api_key"]
+        _state["keys"][provider] = data["api_key"]
     try:
         _state["chunk_size"] = int(data.get("chunk_size", _state["chunk_size"]))
         _state["chunk_overlap"] = int(data.get("chunk_overlap", _state["chunk_overlap"]))
@@ -184,9 +186,13 @@ def api_upload():
         return jsonify({"ok": False, "error": "仅支持 .txt 文件"}), 400
     docs_dir = BASE_DIR / "docs"
     docs_dir.mkdir(exist_ok=True)
-    save_path = docs_dir / f.filename
+    # 防路径穿越：只取纯文件名，并校验最终解析路径仍落在 docs_dir 内
+    safe_name = Path(f.filename).name
+    save_path = (docs_dir / safe_name).resolve()
+    if save_path.parent != docs_dir.resolve():
+        return jsonify({"ok": False, "error": "非法文件名"}), 400
     f.save(str(save_path))
-    return jsonify({"ok": True, "filename": f.filename})
+    return jsonify({"ok": True, "filename": safe_name})
 
 
 @app.route("/api/history", methods=["GET"])

@@ -432,6 +432,14 @@ $("#pwToggle").onclick = () => {
   $("#pwToggle").textContent = show ? "隐藏" : "显示";
 };
 
+// 切换模型提供商时清空 Key 输入框并刷新状态，避免误把上一家的 key 发给新模型
+document.querySelectorAll('#provRadios input[name=provider]').forEach(r => {
+  r.addEventListener("change", async () => {
+    $("#apiKey").value = "";
+    await refreshStatus();
+  });
+});
+
 // 保存配置
 $("#saveCfg").onclick = async () => {
   const provider = document.querySelector('input[name=provider]:checked').value;
@@ -523,7 +531,7 @@ async function doUpload(f) {
   try {
     const r = await fetch("/api/upload", { method: "POST", body: fd });
     const d = await r.json();
-    if (d.ok) { toast(`已上传 ${d.filename}，请点「初始化 / 重建索引」生效。`, "ok"); $("#uploadMsg").textContent = `✓ 已上传 ${d.filename}`; await refreshDocs(); }
+    if (d.ok) { toast(`已上传 ${d.filename}，请点「初始化 / 重建索引」生效。`, "ok"); $("#uploadMsg").textContent = `✓ 已上传 ${d.filename}`; fileInput.value = ""; await refreshDocs(); }
     else toast("✗ " + (d.error || "上传失败"), "err");
   } catch (e) { toast("✗ " + e.message, "err"); }
 }
