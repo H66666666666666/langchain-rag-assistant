@@ -22,6 +22,11 @@ from app import RAGAssistant, BASE_DIR
 app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 限制上传文件大小 10MB
 
+# 上传超限时返回 JSON 而非 Flask 默认 HTML 错误页，方便前端解析提示
+@app.errorhandler(413)
+def _request_too_large(_e):
+    return jsonify({"ok": False, "error": "上传文件超过 10MB 限制"}), 413
+
 _PROVIDERS = ("deepseek", "mimo", "openai")
 _KEY_ENV = {
     "deepseek": "DEEPSEEK_API_KEY",
@@ -109,6 +114,14 @@ def api_config():
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "参数必须为整数"}), 400
 
+    # 基本范围校验，避免非法值导致 Chroma 分割/检索异常
+    if not (1 <= _state["chunk_size"] <= 8000):
+        return jsonify({"ok": False, "error": "chunk_size 需在 1~8000"}), 400
+    if not (0 <= _state["chunk_overlap"] < _state["chunk_size"]):
+        return jsonify({"ok": False, "error": "chunk_overlap 需 >=0 且小于 chunk_size"}), 400
+    if not (1 <= _state["search_k"] <= 50):
+        return jsonify({"ok": False, "error": "search_k 需在 1~50"}), 400
+
     # 配置变更后标记需重建索引
     _build_assistant()
     return jsonify({"ok": True})
@@ -155,7 +168,12 @@ def api_ask():
 def api_search():
     data = request.get_json(silent=True) or {}
     query = (data.get("query") or "").strip()
-    k = int(data.get("k", _state["search_k"]))
+    try:
+        k = int(data.get("k", _state["search_k"]))
+    except (TypeError, ValueError):
+        k = _state["search_k"]
+    if k < 1:
+        k = 1
     if not query:
         return jsonify({"ok": False, "error": "查询不能为空"}), 400
     try:

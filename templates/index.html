@@ -432,11 +432,15 @@ $("#pwToggle").onclick = () => {
   $("#pwToggle").textContent = show ? "隐藏" : "显示";
 };
 
-// 切换模型提供商时清空 Key 输入框并刷新状态，避免误把上一家的 key 发给新模型
+// 切换模型提供商：清空 Key 输入框（避免误把上一家的 key 发给新模型），并立即同步到后端，
+// 否则「初始化 / 重建索引」仍会用旧模型建索引，静默用错模型。
 document.querySelectorAll('#provRadios input[name=provider]').forEach(r => {
   r.addEventListener("change", async () => {
     $("#apiKey").value = "";
-    await refreshStatus();
+    try {
+      await api("/api/config", "POST", { model_provider: r.value });
+      await refreshStatus();
+    } catch (e) { toast("切换模型失败：" + e.message, "err"); }
   });
 });
 
